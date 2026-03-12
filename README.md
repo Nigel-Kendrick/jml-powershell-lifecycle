@@ -233,9 +233,7 @@ This project is part of the NigelTech IAM portfolio:
 | Repository | Pillar |
 |---|---|
 | jml-powershell-lifecycle *(this repo)* | IGA — PowerShell lifecycle automation |
-| jml-entra-provisioning | IGA — API-driven SCIM provisioning |
 | salesforce-saml-sso | Federation / SSO |
 | hybrid-azure-ad-join | Device Identity |
 | conditional-access-policies | Access Management |
 | sspr-configuration | Identity Management |
-| privileged-identity-management *(coming soon)* | PAM |
