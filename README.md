@@ -62,9 +62,6 @@ jml-powershell-lifecycle/
 │   ├── joiner/                     # AD user creation, group membership, Entra sync, license assignment
 │   ├── mover/                      # Before/after: OU move, group change, manager update
 │   └── leaver/                     # Account disable, group removal, Entra ID disabled status
-└── docs/
-    ├── SETUP.md                    # Lab environment setup guide
-    └── IGA_CONCEPTS.md             # Mapping to enterprise IGA tools
 ```
 
 ---
