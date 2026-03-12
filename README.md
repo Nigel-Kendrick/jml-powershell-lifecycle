@@ -1,10 +1,12 @@
 # PowerShell JML Identity Lifecycle Automation
 
-Automated Joiner/Mover/Leaver (JML) identity lifecycle management for hybrid Microsoft environments, demonstrating Identity Governance & Administration (IGA) principles used by enterprise tools like SailPoint IdentityIQ and Saviynt.
+Automated Joiner/Mover/Leaver (JML) identity lifecycle management for hybrid Microsoft environments, demonstrating Identity Governance & Administration (IGA) principles used by enterprise platforms like SailPoint IdentityIQ and Saviynt.
+
+---
 
 ## 🎯 Project Overview
 
-This lab simulates a production Identity Governance workflow where an HR system (CSV feed) drives automated provisioning, role changes, and deprovisioning across on-premises Active Directory and Azure Entra ID (Azure AD).
+This lab simulates a production Identity Governance workflow where an HR system (CSV feed) drives automated provisioning, role changes, and deprovisioning across on-premises Active Directory and Microsoft Entra ID.
 
 **Environment:**
 - **Domain:** NigelTech.local / nigeltech.onmicrosoft.com
@@ -14,29 +16,52 @@ This lab simulates a production Identity Governance workflow where an HR system 
 
 **IGA Capabilities Demonstrated:**
 - ✅ Automated user provisioning from authoritative source (HR feed)
-- ✅ Role-based access control (RBAC) via department groups
+- ✅ Role-based access control (RBAC) via department security groups
 - ✅ Identity lifecycle state transitions (Joiner → Active → Mover → Leaver)
-- ✅ Separation of duties (manager hierarchy enforcement)
+- ✅ Manager hierarchy enforcement and attribute management
 - ✅ Automated deprovisioning and access revocation
+- ✅ Group-based license assignment and revocation
+- ✅ Microsoft Graph API integration for real-time Entra ID account management
 - ✅ Audit logging for compliance
 
 ---
 
+## 🔬 Lab Scope
+
+This project covers **EMP1001–EMP1005** exclusively. The NigelTech tenant contains additional accounts from prior lab projects (Entra API-driven provisioning, Hybrid Azure AD Join, Conditional Access, etc.) which appear in some screenshots but are outside the scope of this project. All JML scripts use `EmployeeID` as the authoritative identifier, so pre-existing accounts are never touched.
+
+---
+
+## 👥 HR Feed — Employee Roster
+
+| EmployeeID | Name | Department | Action | Manager |
+|---|---|---|---|---|
+| EMP1001 | Steven Bell | IT | Joiner | mthomas (Michael Thomas) |
+| EMP1002 | Layla Hassan | Finance | Joiner | kdavis (Karen Davis) |
+| EMP1003 | Darius King | HR | Joiner | ltaylor (Lisa Taylor) |
+| EMP1004 | Simone Ford | IT → Finance | Mover | mthomas → kdavis |
+| EMP1005 | Ray Chen | Sales | Leaver | rbrown (Robert Brown) |
+
+> **Note:** Jane Smith (`jsmith`) is a Finance staff account representing a pre-existing tenant user. She is not a manager in this project. IT is managed by Michael Thomas (`mthomas`).
+
+---
+
 ## 📂 Repository Structure
+
 ```
 jml-powershell-lifecycle/
 ├── scripts/
 │   ├── 0_Create_Managers.ps1       # Pre-flight: Create manager accounts
-│   ├── 0_Create_Mover_Leaver.ps1   # Pre-flight: Setup existing users for Mover/Leaver demo
+│   ├── 0_Create_Mover_Leaver.ps1   # Pre-flight: Create Mover/Leaver accounts for before state
 │   ├── 1_Joiner.ps1                # New hire provisioning
-│   ├── 2_Mover.ps1                 # Role change / transfer automation
+│   ├── 2_Mover.ps1                 # Role change / department transfer automation
 │   └── 3_Leaver.ps1                # Termination / offboarding automation
 ├── sample-data/
 │   └── HR_Feed.csv                 # Mock HR system of record (5 employees)
 ├── screenshots/
-│   ├── joiner/                     # Before/after AD user creation, group membership
-│   ├── mover/                      # Department transfer, OU move, manager update
-│   └── leaver/                     # Account disable, group removal, Entra ID status
+│   ├── joiner/                     # AD user creation, group membership, Entra sync, license assignment
+│   ├── mover/                      # Before/after: OU move, group change, manager update
+│   └── leaver/                     # Account disable, group removal, Entra ID disabled status
 └── docs/
     ├── SETUP.md                    # Lab environment setup guide
     └── IGA_CONCEPTS.md             # Mapping to enterprise IGA tools
@@ -48,238 +73,169 @@ jml-powershell-lifecycle/
 
 ### Prerequisites
 - Windows Server with Active Directory Domain Services
-- Azure Entra ID tenant with Entra Connect configured
+- Microsoft Entra ID tenant with Entra Connect configured
 - Microsoft 365 E5 licenses (or trial)
-- PowerShell 5.1+ with Active Directory and Microsoft.Graph modules
+- PowerShell 5.1+ with Active Directory module (RSAT)
+- App registration in Entra ID with `User.ReadWrite.All` application permission (for Leaver script)
 
-### Setup Steps
+### Setup
 
-1. **Clone the repository:**
+**1. Clone the repository:**
 ```powershell
-   git clone https://github.com/nigel-kendrick/jml-powershell-lifecycle.git
-   cd jml-powershell-lifecycle
+git clone https://github.com/nigel-kendrick/jml-powershell-lifecycle.git
+cd jml-powershell-lifecycle
 ```
 
-2. **Create lab directory structure:**
+**2. Create lab directory structure:**
 ```powershell
-   New-Item -Path "C:\JML_Lab" -ItemType Directory
-   New-Item -Path "C:\JML_Lab\Logs" -ItemType Directory
-   Copy-Item .\sample-data\HR_Feed.csv -Destination C:\JML_Lab\
-   Copy-Item .\scripts\*.ps1 -Destination C:\JML_Lab\
+New-Item -Path "C:\JML_Lab" -ItemType Directory
+New-Item -Path "C:\JML_Lab\Logs" -ItemType Directory
+Copy-Item .\sample-data\HR_Feed.csv -Destination C:\JML_Lab\
+Copy-Item .\scripts\*.ps1 -Destination C:\JML_Lab\
 ```
 
-3. **Configure Graph API credentials** (for Leaver script):
+**3. Configure Graph API credentials** (required for Leaver script):
 ```powershell
-   # Create graph_creds.json with app registration details
-   @{
-       tenantId = "your-tenant-id"
-       clientId = "your-app-id"
-       clientSecret = "your-secret"
-   } | ConvertTo-Json | Out-File C:\JML_Lab\graph_creds.json
+@{
+    TenantId     = "your-tenant-id"
+    ClientId     = "your-app-client-id"
+    ClientSecret = "your-client-secret"
+} | ConvertTo-Json | Out-File C:\JML_Lab\graph_creds.json
 ```
 
-4. **Run pre-flight scripts:**
+**4. Run scripts in order — sequence is required:**
 ```powershell
-   .\0_Create_Managers.ps1
-   .\0_Create_Mover_Leaver.ps1
+# Step 1: Create manager accounts
+.\0_Create_Managers.ps1
+
+# Step 2: Provision new hires
+.\1_Joiner.ps1
+
+# Step 3: Create Mover/Leaver accounts to establish the before state
+# *** Take BEFORE screenshots after this step ***
+.\0_Create_Mover_Leaver.ps1
+
+# Step 4: Process role change
+.\2_Mover.ps1
+
+# Step 5: Process termination
+.\3_Leaver.ps1
 ```
 
-5. **Execute JML workflows:**
-```powershell
-   .\1_Joiner.ps1    # Provision new hires
-   .\2_Mover.ps1     # Process role changes
-   .\3_Leaver.ps1    # Offboard terminated employees
-```
+> ⚠️ **Important:** `0_Create_Mover_Leaver.ps1` must run before `2_Mover.ps1` and `3_Leaver.ps1`. Simone Ford and Ray Chen must exist in AD before the Mover and Leaver scripts can locate them by EmployeeID. Running `2_Mover.ps1` without this pre-flight will log `ERROR: No user found with EmployeeID 'EMP1004'` and skip the record.
 
 ---
 
-## 📋 HR Feed Structure
+## ⚙️ Script Details
 
-The `HR_Feed.csv` acts as the authoritative source (like Workday, SuccessFactors, or UKG):
+### 0_Create_Managers.ps1
+Creates the manager accounts referenced in `HR_Feed.csv` before any JML scripts run. Safe to re-run — skips any account that already exists. Adds each manager to `GRP-M365-E5-Licensed` for licensing.
 
-| EmployeeID | FirstName | LastName | Department | Title | Manager | Action |
-|------------|-----------|----------|------------|-------|---------|--------|
-| EMP1001 | Steven | Bell | IT | Systems Administrator | mthomas | Joiner |
-| EMP1002 | Layla | Hassan | Finance | Financial Analyst | kdavis | Joiner |
-| EMP1003 | Darius | King | HR | HR Specialist | ltaylor | Joiner |
-| EMP1004 | Simone | Ford | Finance | Senior Financial Analyst | kdavis | Mover |
-| EMP1005 | Ray | Chen | Sales | Account Executive | rbrown | Leaver |
+| SAM | Name | Department | Role |
+|---|---|---|---|
+| mthomas | Michael Thomas | IT | IT Manager |
+| kdavis | Karen Davis | Finance | Finance Manager |
+| ltaylor | Lisa Taylor | HR | HR Manager |
+| rbrown | Robert Brown | Sales | Sales Manager |
+| jsmith | Jane Smith | Finance | Financial Analyst (staff) |
 
-**Action Types:**
-- **Joiner:** New employee - create AD account, assign to department OU/group, provision M365 license
-- **Mover:** Role change - update department, OU, groups, manager, title
-- **Leaver:** Termination - disable account, revoke access, move to disabled OU, scramble password
+### 0_Create_Mover_Leaver.ps1
+Creates Simone Ford (IT) and Ray Chen (Sales) with correct OU placement, department group membership, and E5 license group. This establishes a realistic "before" state so the Mover and Leaver scripts have accounts to act on. Run this script and take your before screenshots before proceeding to `2_Mover.ps1`.
 
----
+### 1_Joiner.ps1
+Reads `Joiner` rows from `HR_Feed.csv` and performs:
+- Generates `SamAccountName` — first initial + last name (e.g. `sbell`), with numeric suffix if taken (`sbell1`, `sbell2`)
+- Creates AD account in the correct department OU
+- Sets manager attribute from CSV
+- Adds to department security group (`GRP-IT-Staff`, `GRP-Finance-Staff`, etc.)
+- Adds to `GRP-M365-E5-Licensed` for group-based license assignment
+- Checks for duplicate `EmployeeID` and UPN before creating — idempotent safe
 
-## 🔐 Identity Lifecycle Workflows
+### 2_Mover.ps1
+Reads `Mover` rows from `HR_Feed.csv` and performs:
+- Looks up user by `EmployeeID` (not name — authoritative source pattern)
+- Removes from old department security group
+- Moves AD account to new department OU
+- Updates `Department` and `Title` attributes (uses `NewTitle` column, falls back to `JobTitle`)
+- Updates `Manager` attribute to reflect new reporting line
+- Adds to new department security group
 
-### 1️⃣ Joiner (New Hire Provisioning)
-
-**Business Process:**
-- HR system sends new hire record on start date
-- IT provisions access before employee arrives
-
-**Automation (`1_Joiner.ps1`):**
-```powershell
-# For each Joiner in HR_Feed.csv:
-1. Generate SamAccountName (first initial + lastname, e.g. sbell)
-2. Check for duplicate EmployeeID and UPN
-3. Create AD user in department OU (e.g. OU=IT,OU=Departments,DC=nigeltech,DC=local)
-4. Set attributes: EmployeeID, Department, Title, Manager, UPN
-5. Add to department security group (e.g. GRP-IT)
-6. Add to GRP-M365-E5-Licensed (triggers license assignment via group-based licensing)
-7. Log action to C:\JML_Lab\Logs\JML_Log.txt
-```
-
-**Result:** User created in AD, synced to Entra ID via Entra Connect, auto-assigned M365 E5 license
-
----
-
-### 2️⃣ Mover (Role Change / Department Transfer)
-
-**Business Process:**
-- Employee transfers from IT to Finance
-- Access should reflect new role (remove old permissions, grant new)
-
-**Automation (`2_Mover.ps1`):**
-```powershell
-# For each Mover in HR_Feed.csv:
-1. Lookup user by EmployeeID
-2. Remove from old department group (GRP-IT)
-3. Move user to new department OU (OU=Finance,OU=Departments)
-4. Update AD attributes: Department, Title, Manager
-5. Add to new department group (GRP-Finance)
-6. Entra Connect sync propagates changes to Azure AD
-```
-
-**IGA Concept:** **Birthright provisioning** - users automatically get access based on role/department
+### 3_Leaver.ps1
+Reads `Leaver` rows from `HR_Feed.csv` and performs:
+1. Disables AD account
+2. Scrambles password to a random 32-character string
+3. Strips all group memberships
+4. Removes from `GRP-M365-E5-Licensed` (triggers license revocation after Entra Connect sync)
+5. Moves account to `OU=Disabled_Accounts`
+6. Adds to `GRP-Offboarded` staging group
+7. Calls Microsoft Graph API to immediately disable the Entra ID account
 
 ---
 
-### 3️⃣ Leaver (Termination / Offboarding)
+## 🔑 License Management
 
-**Business Process:**
-- Employee terminated or resigned
-- Immediate access revocation required for security/compliance
+Users are added to `GRP-M365-E5-Licensed` in on-premises Active Directory. Entra Connect syncs the group membership to Entra ID, where the group has an M365 E5 license assigned to it. Entra's group-based licensing automatically assigns the license to any synced member. For Leavers, removing the user from the group in AD triggers license revocation after the next sync cycle.
 
-**Automation (`3_Leaver.ps1`):**
-```powershell
-# For each Leaver in HR_Feed.csv:
-1. Disable AD account
-2. Generate random 32-character password (prevents re-activation without password reset)
-3. Remove from ALL security groups
-4. Remove from GRP-M365-E5-Licensed (revokes M365 license)
-5. Move to OU=Disabled_Accounts (isolates from active users)
-6. Add to GRP-Offboarded (for audit/reporting)
-7. Use Microsoft Graph API to disable Entra ID account (prevents cloud-only app access)
-8. Log full action details
-```
-
-**Security Features:**
-- Password scramble prevents unauthorized access even if account re-enabled
-- Group removal follows least-privilege principle
-- Dual disable (AD + Entra) prevents cloud app access during sync delay
-- Audit trail via logging and GRP-Offboarded membership
+> This mirrors the enterprise pattern used in production IGA deployments. Direct per-user license assignment via Graph API is avoided intentionally — group-based licensing scales correctly and ties revocation to group membership logic automatically.
 
 ---
 
-## 🏢 Enterprise IGA Tool Mapping
+## 🔗 Microsoft Graph API Integration
 
-This lab demonstrates concepts used in production Identity Governance tools:
+The Leaver script uses the Graph API (`PATCH /users/{id}`) to immediately disable the Entra ID account upon offboarding, without waiting for the next Entra Connect sync cycle. This ensures cloud access is revoked in real time even if the sync window has not yet fired.
 
-| Concept | This Lab | SailPoint IdentityIQ | Saviynt | Microsoft Entra ID Governance |
-|---------|----------|---------------------|---------|-------------------------------|
-| **Authoritative Source** | HR_Feed.csv | HR connector (Workday, SAP) | Source systems integration | HR-driven provisioning |
-| **Provisioning** | 1_Joiner.ps1 | Provisioning policy | Account aggregation workflow | Lifecycle workflows |
-| **Role-Based Access** | Department groups | Role definitions | Role catalog | Entitlements |
-| **Access Certification** | Manual review of groups | Access review campaigns | Access certification | Access reviews |
-| **Deprovisioning** | 3_Leaver.ps1 | Leaver workflow | Termination process | Lifecycle workflows (Leaver) |
-| **Audit Logging** | JML_Log.txt | Audit reports | Compliance reports | Sign-in logs + audit logs |
-| **Separation of Duties** | Manager hierarchy | SoD policies | SoD violations | Privileged access reviews |
-
-**Key Insight:** This PowerShell lab is functionally equivalent to an IGA tool's core capabilities - the enterprise tools add UI, compliance reporting, analytics, and multi-application connectors.
+Credentials are loaded from `C:\JML_Lab\graph_creds.json` using an app registration with `User.ReadWrite.All` application permission and client credentials flow.
 
 ---
 
-## 🛠️ Technical Details
+## 📋 Lab Notes
 
-### Naming Conventions
-- **SamAccountName:** First initial + last name (e.g. `sbell` for Steven Bell)
-  - Conflict resolution: Numeric suffix (`sbell2`, `sbell3`)
-- **UPN:** `samaccountname@nigeltech.onmicrosoft.com`
-- **EmployeeID:** Unique identifier from HR system (e.g. `EMP1001`)
+**Pre-existing tenant accounts:** The NigelTech tenant was built across multiple lab projects. Accounts such as Ethan Brooks, Derek Nguyen (EMP1010), and others visible in screenshots belong to earlier project batches and are unrelated to this project's scope. This project's scripts are scoped to EMP1001–EMP1005 via `EmployeeID` filtering.
 
-### Group-Based Licensing
-Users are added to GRP-M365-E5-Licensed in on-premises Active Directory. Entra Connect syncs the group membership to Entra ID, where the group has an M365 E5 license assigned to it. Entra's group-based licensing automatically assigns the license to any synced member. For Leavers, removing the user from the group in AD triggers license revocation after the next sync cycle.- Simplifies script logic (no Graph licensing calls needed)
-- Provides centralized license management
-- Automatically handles license removal when user leaves group
+**GRP-M365-E3-Licensed:** A legacy group visible in some screenshots from earlier lab work. Only `GRP-M365-E5-Licensed` is used in this project.
 
-### Logging
-All scripts append to `C:\JML_Lab\Logs\JML_Log.txt`:
-```
-2025-01-29 14:32:15 | JOINER | EMP1001 | Steven Bell | sbell | Created in OU=IT, added to GRP-IT, GRP-M365-E5-Licensed
-2025-01-29 14:35:22 | MOVER | EMP1004 | Simone Ford | sford | Moved IT->Finance, updated manager mthomas->kdavis
-2025-01-29 14:38:47 | LEAVER | EMP1005 | Ray Chen | rchen | Disabled AD, removed groups, disabled Entra ID
-```
+**Ray Chen — license group observation:** The before screenshot shows Ray Chen as a member of `GRP-M365-E5-Licensed`. The Leaver log records `INFO: rchen was not in GRP-M365-E5-Licensed` at the time the script ran. This is consistent with real-world timing in a hybrid environment — group membership state at script execution time may differ from a screenshot taken earlier in the same session depending on sync cycle timing.
+
+**First Mover run error:** The full JML log shows an initial failed Mover attempt (`ERROR: No user found with EmployeeID 'EMP1004'`) followed by a successful run after `0_Create_Mover_Leaver.ps1` was executed. This is documented intentionally — it demonstrates why the pre-flight sequencing exists and what happens when it is skipped, which mirrors how enterprise IGA platforms enforce workflow prerequisites.
+
+---
+
+## 🗺️ IGA Concept Mapping
+
+| This Lab | Enterprise Equivalent |
+|---|---|
+| HR_Feed.csv | Authoritative source (Workday, SAP HR) |
+| 1_Joiner.ps1 | Joiner workflow / provisioning policy |
+| 2_Mover.ps1 | Mover workflow / role change event |
+| 3_Leaver.ps1 | Leaver workflow / termination event |
+| GRP-M365-E5-Licensed | Entitlement / access profile |
+| GRP-IT-Staff, GRP-Finance-Staff | Role-based groups / access profiles |
+| EmployeeID as lookup key | Authoritative identifier / correlation key |
+| JML_Log.txt | Audit trail / provisioning log |
+| Graph API account disable | Real-time deprovisioning / connector action |
 
 ---
 
 ## 📸 Screenshots
 
-See `screenshots/` folder for before/after evidence:
-- **Joiner:** AD user creation, group membership, Entra ID sync, M365 license assignment
-- **Mover:** Department change, OU move, manager update, group membership changes
-- **Leaver:** Disabled account status, group removal, Entra ID disabled, Disabled_Accounts OU
+Screenshots are organized by lifecycle phase in the `screenshots/` directory:
 
----
-
-## 🎓 Skills Demonstrated
-
-### Technical
-- PowerShell scripting for identity automation
-- Active Directory management (user creation, OU structure, group membership)
-- Microsoft Graph API — used in the Leaver script to immediately disable the Entra ID account via PATCH /users, ensuring cloud access is revoked without waiting for the next Entra Connect sync cycle.)
-- CSV parsing and data validation
-- Error handling and logging
-- Idempotent script design (safe to re-run)
-
-### Identity Governance Concepts
-- Identity lifecycle management (Joiner/Mover/Leaver)
-- Authoritative source integration (HR feed)
-- Role-based access control (RBAC)
-- Separation of duties (manager hierarchy)
-- Least privilege principle (group removal on departure)
-- Audit trails and compliance logging
-
-### Enterprise Relevance
-- Demonstrates understanding of IGA tools (SailPoint, Saviynt)
-- Applicable to real-world IAM analyst workflows
-- Scalable patterns (CSV could be replaced with API calls to Workday, SAP, etc.)
+- **joiner/** — HR feed, script log, AD account creation, group membership, Entra ID sync, M365 license assignment
+- **mover/** — Before state (IT OU), script output, after state (Finance OU, updated manager and title)
+- **leaver/** — Before state (Sales OU), script output, GRP-Offboarded membership, Entra ID disabled status
 
 ---
 
 ## 🔗 Related Projects
 
-- [IAM Portfolio Website](https://nigel-kendrick.github.io) - SSPR, Hybrid Join, Conditional Access, SAML SSO labs
-- [NigelTech.local Lab Environment](https://github.com/nigel-kendrick/nigeltech-lab-docs) - Hybrid AD/Entra infrastructure
+This project is part of the NigelTech IAM portfolio:
 
----
-
-## 📄 License
-
-MIT License - Free to use for educational and portfolio purposes
-
----
-
-## 👤 Author
-
-**Nigel Kendrick**  
-IAM Analyst | Systems Administrator  
-[Portfolio](https://nigel-kendrick.github.io) | [LinkedIn](https://linkedin.com/in/nigel-kendrick1) | [Email](mailto:Nigeldkendrick@gmail.com)
-
----
-
-## 🙏 Acknowledgments
-
-Built as part of a structured IAM training curriculum, this lab demonstrates practical application of Identity Governance principles for enterprise environments.
+| Repository | Pillar |
+|---|---|
+| jml-powershell-lifecycle *(this repo)* | IGA — PowerShell lifecycle automation |
+| jml-entra-provisioning | IGA — API-driven SCIM provisioning |
+| salesforce-saml-sso | Federation / SSO |
+| hybrid-azure-ad-join | Device Identity |
+| conditional-access-policies | Access Management |
+| sspr-configuration | Identity Management |
+| privileged-identity-management *(coming soon)* | PAM |
