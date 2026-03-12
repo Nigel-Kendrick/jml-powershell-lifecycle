@@ -276,7 +276,7 @@ MIT License - Free to use for educational and portfolio purposes
 
 **Nigel Kendrick**  
 IAM Analyst | Systems Administrator  
-[Portfolio](https://nigel-kendrick.github.io) | [LinkedIn](https://linkedin.com/in/nigel-kendrick) | [Email](mailto:Nigeldkendrick@gmail.com)
+[Portfolio](https://nigel-kendrick.github.io) | [LinkedIn](https://linkedin.com/in/nigel-kendrick1) | [Email](mailto:Nigeldkendrick@gmail.com)
 
 ---
 
